@@ -344,27 +344,20 @@ app.delete('/api/profiles', (req, res) => {
 // Get profiles that need detail scraping
 app.get('/api/profiles/unscraped', (req, res) => {
   try {
-    const { limit = 100, sessionId } = req.query;
+    const { limit = 100 } = req.query;
 
-    let query = `
-      SELECT id, MIN(session_id) as session_id
+    const query = `
+      SELECT id
       FROM profiles
       WHERE (status = 'id_only' OR status IS NULL)
         AND status != 'scraped'
         AND status != 'invalid'
         AND status != 'failed'
+      ORDER BY first_scraped_at ASC
+      LIMIT ?
     `;
-    let params = [];
 
-    if (sessionId) {
-      query += ' AND session_id = ?';
-      params.push(sessionId);
-    }
-
-    query += ' GROUP BY id ORDER BY MIN(ROWID) LIMIT ?';
-    params.push(parseInt(limit));
-
-    const profiles = db.prepare(query).all(...params);
+    const profiles = db.prepare(query).all(parseInt(limit));
 
     res.json({
       success: true,
@@ -391,35 +384,73 @@ app.put('/api/profiles/:id', (req, res) => {
       review_rating,
       review_count,
       social_platforms,
-      status,
-      sessionId
+      status
     } = req.body;
 
+    // Extract platform-specific data from social_platforms array
+    const platforms = social_platforms || [];
+    const instagram = platforms.find(p => p.platform === 'instagram') || {};
+    const tiktok = platforms.find(p => p.platform === 'tiktok') || {};
+    const youtube = platforms.find(p => p.platform === 'youtube') || {};
+    const twitter = platforms.find(p => p.platform === 'twitter') || {};
+    const twitch = platforms.find(p => p.platform === 'twitch') || {};
+    const amazon = platforms.find(p => p.platform === 'amazon') || {};
+
     const stmt = db.prepare(`
-      UPDATE profiles
-      SET name = ?,
-          location = ?,
-          bio = ?,
-          review_rating = ?,
-          review_count = ?,
-          social_platforms = ?,
-          status = ?,
-          profile_scraped_at = datetime('now')
-      WHERE id = ?
+      INSERT INTO profiles (
+        id, name, location, bio, review_rating, review_count,
+        instagram_link, instagram_followers,
+        tiktok_link, tiktok_followers,
+        youtube_link, youtube_followers,
+        twitter_link, twitter_followers,
+        twitch_link, twitch_followers,
+        amazon_link,
+        status, last_updated_at, first_scraped_at, scraped_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), 1)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        location = excluded.location,
+        bio = excluded.bio,
+        review_rating = excluded.review_rating,
+        review_count = excluded.review_count,
+        instagram_link = excluded.instagram_link,
+        instagram_followers = excluded.instagram_followers,
+        tiktok_link = excluded.tiktok_link,
+        tiktok_followers = excluded.tiktok_followers,
+        youtube_link = excluded.youtube_link,
+        youtube_followers = excluded.youtube_followers,
+        twitter_link = excluded.twitter_link,
+        twitter_followers = excluded.twitter_followers,
+        twitch_link = excluded.twitch_link,
+        twitch_followers = excluded.twitch_followers,
+        amazon_link = excluded.amazon_link,
+        status = excluded.status,
+        last_updated_at = datetime('now'),
+        scraped_count = scraped_count + 1
     `);
 
     const result = stmt.run(
+      id,
       name,
       location,
       bio,
       review_rating,
       review_count,
-      JSON.stringify(social_platforms || []),
-      status || 'scraped',
-      id
+      instagram.link || null,
+      instagram.followers || null,
+      tiktok.link || null,
+      tiktok.followers || null,
+      youtube.link || null,
+      youtube.followers || null,
+      twitter.link || null,
+      twitter.followers || null,
+      twitch.link || null,
+      twitch.followers || null,
+      amazon.link || null,
+      status || 'scraped'
     );
 
-    console.log(`✓ Updated ${result.changes} row(s) for profile: ${id}`);
+    console.log(`✓ Updated profile: ${id} (${name})`);
 
     res.json({
       success: true,

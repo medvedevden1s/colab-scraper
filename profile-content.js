@@ -11,6 +11,25 @@ function getProfileIdFromUrl() {
   return match ? match[1] : null;
 }
 
+// Parse follower count to number (e.g., "29.8k Followers" → 29800)
+function parseFollowerCount(text) {
+  if (!text || text === 'View') return null;
+
+  // Remove "Followers", "Subscribers", etc.
+  let cleaned = text.replace(/\s*(Followers|Subscribers|Views?)\s*/gi, '').trim();
+
+  // Handle k (thousands) and M (millions)
+  if (cleaned.endsWith('k') || cleaned.endsWith('K')) {
+    return parseInt(parseFloat(cleaned) * 1000, 10);
+  } else if (cleaned.endsWith('M') || cleaned.endsWith('m')) {
+    return parseInt(parseFloat(cleaned) * 1000000, 10);
+  }
+
+  // Try to parse as regular number
+  const num = parseFloat(cleaned.replace(/,/g, ''));
+  return isNaN(num) ? null : parseInt(num, 10);
+}
+
 // Extract profile details
 function extractProfileDetails() {
   console.log('[Profile Scraper] Extracting profile details...');
@@ -93,8 +112,8 @@ function extractProfileDetails() {
       }
     }
 
-    // For Amazon, followerText is just "View"
-    const followers = followerText === 'View' ? null : followerText;
+    // Parse followers to number
+    const followers = parseFollowerCount(followerText);
 
     details.social_platforms.push({
       platform: platformType,
