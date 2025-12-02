@@ -21,20 +21,13 @@
     }
   },
   "background": {
-    "service_worker": "background.js",
-    "type": "module"
+    "service_worker": "background.js"
   },
   "content_scripts": [
     {
       "matches": ["https://collabstr.com/influencers*"],
       "js": ["content.js"],
       "run_at": "document_idle"
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["sql-wasm.wasm"],
-      "matches": ["<all_urls>"]
     }
   ]
 }
