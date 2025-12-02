@@ -305,6 +305,278 @@ async function clearDatabase() {
   }
 }
 
+// ============================================
+// Profile Detail Scraping Functions
+// ============================================
+
+let isProfileScrapingActive = false;
+let profileScrapingQueue = [];
+let activeProfileTabs = new Map(); // Map of tabId -> profileId
+let maxParallelTabs = 3;
+
+// Get unscraped profiles from API
+async function getUnscrapedProfiles(limit = 100) {
+  try {
+    const result = await apiRequest(`/profiles/unscraped?sessionId=${currentSessionId || ''}&limit=${limit}`);
+    return result.profiles || [];
+  } catch (error) {
+    console.error('[Background] Failed to get unscraped profiles:', error);
+    return [];
+  }
+}
+
+// Update profile with detailed information
+async function updateProfileDetails(profileId, details) {
+  try {
+    const result = await apiRequest(`/profiles/${profileId}`, 'PUT', {
+      ...details,
+      sessionId: currentSessionId
+    });
+    console.log(`[Background] ✓ Updated profile details for ${profileId}`);
+    return result;
+  } catch (error) {
+    console.error(`[Background] Failed to update profile ${profileId}:`, error);
+    throw error;
+  }
+}
+
+// Get profile scraping progress
+async function getProfileProgress() {
+  try {
+    const result = await apiRequest(`/profiles/progress?sessionId=${currentSessionId || ''}`);
+    return result.progress;
+  } catch (error) {
+    console.error('[Background] Failed to get progress:', error);
+    return { total: 0, scraped: 0, idOnly: 0, failed: 0, percentage: 0 };
+  }
+}
+
+// Scrape a single profile in a new tab
+async function scrapeProfileInTab(profileId) {
+  console.log(`[Background] Opening tab for profile: ${profileId}`);
+
+  try {
+    // Create new tab with profile URL
+    const tab = await chrome.tabs.create({
+      url: `https://collabstr.com/${profileId}`,
+      active: false // Don't switch to the tab
+    });
+
+    activeProfileTabs.set(tab.id, profileId);
+
+    // Wait for tab to load
+    return new Promise((resolve) => {
+      const listener = (tabId, changeInfo) => {
+        if (tabId === tab.id && changeInfo.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(listener);
+
+          // Wait a moment, then send scrape message
+          setTimeout(async () => {
+            try {
+              console.log(`[Background] Sending SCRAPE_PROFILE to tab ${tab.id}`);
+              const response = await chrome.tabs.sendMessage(tab.id, { type: 'SCRAPE_PROFILE' });
+
+              if (response && response.success) {
+                console.log(`[Background] Profile scraped successfully: ${profileId}`);
+                // Update API with details
+                await updateProfileDetails(profileId, response.details);
+                resolve({ success: true, profileId });
+              } else {
+                console.error(`[Background] Failed to scrape profile: ${profileId}`, response?.error);
+
+                // Mark as invalid if it's a permanent error (404, page doesn't exist)
+                if (response?.shouldMarkFailed) {
+                  console.log(`[Background] Marking ${profileId} as invalid (page does not exist)`);
+                  await apiRequest(`/profiles/${profileId}`, 'PUT', {
+                    status: 'invalid',
+                    sessionId: currentSessionId
+                  });
+                } else {
+                  console.log(`[Background] Temporary error for ${profileId}, will retry later`);
+                  // Leave status as 'id_only' so it can be retried
+                }
+
+                resolve({ success: false, profileId, error: response?.error });
+              }
+            } catch (error) {
+              console.error(`[Background] Error scraping profile ${profileId}:`, error);
+              // Mark as invalid (couldn't connect to page)
+              console.log(`[Background] Marking ${profileId} as invalid (page failed to load)`);
+              try {
+                await apiRequest(`/profiles/${profileId}`, 'PUT', {
+                  status: 'invalid',
+                  sessionId: currentSessionId
+                });
+              } catch (apiError) {
+                console.error(`[Background] Failed to update status for ${profileId}:`, apiError);
+              }
+              resolve({ success: false, profileId, error: error.message });
+            } finally {
+              // Close the tab
+              activeProfileTabs.delete(tab.id);
+              chrome.tabs.remove(tab.id).catch(() => {});
+            }
+          }, 3000); // Wait 3 seconds for page to fully load
+        }
+      };
+
+      chrome.tabs.onUpdated.addListener(listener);
+
+      // Timeout after 30 seconds
+      setTimeout(() => {
+        chrome.tabs.onUpdated.removeListener(listener);
+        activeProfileTabs.delete(tab.id);
+        chrome.tabs.remove(tab.id).catch(() => {});
+        resolve({ success: false, profileId, error: 'Timeout' });
+      }, 30000);
+    });
+  } catch (error) {
+    console.error(`[Background] Failed to open tab for ${profileId}:`, error);
+    return { success: false, profileId, error: error.message };
+  }
+}
+
+// Process profile scraping queue
+async function processProfileQueue() {
+  const BATCH_SIZE = 20; // Process 20 profiles per batch for safety
+  let batchNumber = 0;
+
+  // Keep looping until user stops or no more profiles
+  while (isProfileScrapingActive) {
+    batchNumber++;
+    console.log(`[Background] === Starting batch #${batchNumber} ===`);
+
+    // Fetch next batch of unscraped profiles
+    const profiles = await getUnscrapedProfiles(BATCH_SIZE);
+
+    if (profiles.length === 0) {
+      console.log('[Background] ✓ No more unscraped profiles found - ALL DONE!');
+      break;
+    }
+
+    console.log(`[Background] Fetched ${profiles.length} profiles in batch #${batchNumber}`);
+    profileScrapingQueue = [...profiles];
+
+    let batchProcessed = 0;
+
+    // Process this batch
+    while (isProfileScrapingActive && profileScrapingQueue.length > 0) {
+      // Wait if we have max tabs open
+      while (activeProfileTabs.size >= maxParallelTabs && isProfileScrapingActive) {
+        console.log(`[Background] Waiting... ${activeProfileTabs.size} tabs active`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+
+      if (!isProfileScrapingActive) {
+        console.log('[Background] Scraping stopped by user');
+        break;
+      }
+
+      const profile = profileScrapingQueue.shift();
+      if (profile) {
+        batchProcessed++;
+        console.log(`[Background] Batch #${batchNumber}: Processing ${batchProcessed}/${profiles.length} - ${profile.id}`);
+
+        // Wait a moment between tab openings to prevent race condition
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Start scraping this profile (async)
+        scrapeProfileInTab(profile.id).then(async (result) => {
+          // Update progress in storage
+          try {
+            const progress = await getProfileProgress();
+            await chrome.storage.local.set({
+              profileProgress: progress
+            });
+
+            // Notify popup
+            chrome.runtime.sendMessage({ type: 'UPDATE_PROFILE_PROGRESS' }).catch(() => {});
+          } catch (error) {
+            console.error('[Background] Error updating progress:', error);
+          }
+        }).catch(error => {
+          console.error('[Background] Error in scrapeProfileInTab:', error);
+        });
+      }
+    }
+
+    if (!isProfileScrapingActive) {
+      console.log('[Background] User stopped scraping');
+      break;
+    }
+
+    // Wait for all active tabs in this batch to finish before fetching next batch
+    console.log('[Background] Waiting for batch to complete...');
+    let waitCount = 0;
+    while (activeProfileTabs.size > 0 && waitCount < 60) {
+      console.log(`[Background] ${activeProfileTabs.size} tabs still active...`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      waitCount++;
+    }
+
+    if (waitCount >= 60) {
+      console.warn('[Background] Timeout waiting for tabs, force closing remaining...');
+      for (const tabId of activeProfileTabs.keys()) {
+        chrome.tabs.remove(tabId).catch(() => {});
+      }
+      activeProfileTabs.clear();
+    }
+
+    console.log(`[Background] === Batch #${batchNumber} completed ===`);
+  }
+
+  console.log('[Background] === ALL PROFILE SCRAPING COMPLETED ===');
+  isProfileScrapingActive = false;
+  await chrome.storage.local.set({ isProfileScrapingActive: false });
+
+  // Final progress update
+  const progress = await getProfileProgress();
+  await chrome.storage.local.set({
+    profileProgress: progress
+  });
+  chrome.runtime.sendMessage({ type: 'UPDATE_PROFILE_PROGRESS' }).catch(() => {});
+}
+
+// Start profile scraping
+async function startProfileScraping() {
+  if (isProfileScrapingActive) {
+    console.warn('[Background] Profile scraping already active');
+    return;
+  }
+
+  console.log('[Background] === Starting continuous profile scraping ===');
+
+  // Get parallel tabs setting from user
+  const { parallelTabs = 2 } = await chrome.storage.local.get(['parallelTabs']);
+  maxParallelTabs = parseInt(parallelTabs) || 2;
+
+  console.log(`[Background] Using ${maxParallelTabs} parallel tabs (as set by user)`);
+  console.log('[Background] Processing 20 profiles per batch');
+  console.log('[Background] Will continue until all profiles are scraped');
+  console.log('[Background] ⚠️ You can stop anytime by clicking "Stop Profile Scraping"');
+
+  isProfileScrapingActive = true;
+  await chrome.storage.local.set({ isProfileScrapingActive: true });
+
+  // Start processing queue (it will fetch profiles in batches)
+  processProfileQueue();
+}
+
+// Stop profile scraping
+async function stopProfileScraping() {
+  console.log('[Background] Stopping profile scraping...');
+  isProfileScrapingActive = false;
+  profileScrapingQueue = [];
+
+  // Close all active tabs
+  for (const tabId of activeProfileTabs.keys()) {
+    chrome.tabs.remove(tabId).catch(() => {});
+  }
+  activeProfileTabs.clear();
+
+  await chrome.storage.local.set({ isProfileScrapingActive: false });
+}
+
 // Message handler
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('[Background] Received message:', message.type, 'from:', sender.tab?.id || 'popup');
@@ -372,8 +644,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ success: true });
           break;
 
+        case 'START_PROFILE_SCRAPING':
+          console.log('[Background] Processing START_PROFILE_SCRAPING');
+          await startProfileScraping();
+          sendResponse({ success: true });
+          break;
+
+        case 'STOP_PROFILE_SCRAPING':
+          console.log('[Background] Processing STOP_PROFILE_SCRAPING');
+          await stopProfileScraping();
+          sendResponse({ success: true });
+          break;
+
+        case 'GET_PROFILE_PROGRESS':
+          console.log('[Background] Processing GET_PROFILE_PROGRESS');
+          const progress = await getProfileProgress();
+          sendResponse({ progress });
+          break;
+
         case 'UPDATE_STATS':
-          // Just an update notification, ignore
+        case 'UPDATE_PROFILE_PROGRESS':
+          // Just update notifications, ignore
           break;
 
         default:

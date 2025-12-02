@@ -12,13 +12,32 @@ const resumeInfoEl = document.getElementById('resumeInfo');
 const resumePageEl = document.getElementById('resumePage');
 const waitTimeInput = document.getElementById('waitTime');
 
+// Profile scraping elements
+const startProfileBtn = document.getElementById('startProfileBtn');
+const stopProfileBtn = document.getElementById('stopProfileBtn');
+const profileScrapedEl = document.getElementById('profileScraped');
+const profileRemainingEl = document.getElementById('profileRemaining');
+const profilePercentageEl = document.getElementById('profilePercentage');
+const parallelTabsInput = document.getElementById('parallelTabs');
+
 // Update UI based on scraping state
 async function updateUI() {
-  const { isScrapingActive, profileCount = 0, pageCount = 0, waitTime = 3 } = await chrome.storage.local.get([
+  const {
+    isScrapingActive,
+    profileCount = 0,
+    pageCount = 0,
+    waitTime = 3,
+    isProfileScrapingActive = false,
+    profileProgress = { scraped: 0, idOnly: 0, percentage: 0 },
+    parallelTabs = 2
+  } = await chrome.storage.local.get([
     'isScrapingActive',
     'profileCount',
     'pageCount',
-    'waitTime'
+    'waitTime',
+    'isProfileScrapingActive',
+    'profileProgress',
+    'parallelTabs'
   ]);
 
   // Check for resume info
@@ -27,7 +46,9 @@ async function updateUI() {
   profileCountEl.textContent = profileCount;
   pageCountEl.textContent = pageCount;
   waitTimeInput.value = waitTime;
+  parallelTabsInput.value = parallelTabs;
 
+  // Update list scraping UI
   if (isScrapingActive) {
     startBtn.classList.add('hidden');
     stopBtn.classList.remove('hidden');
@@ -49,6 +70,19 @@ async function updateUI() {
     }
 
     statusEl.textContent = profileCount > 0 ? `Scraped ${profileCount} profiles` : 'Ready to scrape';
+  }
+
+  // Update profile scraping UI
+  profileScrapedEl.textContent = profileProgress.scraped;
+  profileRemainingEl.textContent = profileProgress.idOnly;
+  profilePercentageEl.textContent = `${profileProgress.percentage}% Complete`;
+
+  if (isProfileScrapingActive) {
+    startProfileBtn.classList.add('hidden');
+    stopProfileBtn.classList.remove('hidden');
+  } else {
+    startProfileBtn.classList.remove('hidden');
+    stopProfileBtn.classList.add('hidden');
   }
 }
 
@@ -188,9 +222,54 @@ waitTimeInput.addEventListener('change', async () => {
   }
 });
 
+// Save parallel tabs setting when changed
+parallelTabsInput.addEventListener('change', async () => {
+  const parallelTabs = parseInt(parallelTabsInput.value);
+  if (parallelTabs >= 1 && parallelTabs <= 20) {
+    await chrome.storage.local.set({ parallelTabs });
+    console.log('[Popup] Parallel tabs updated to', parallelTabs);
+  } else {
+    console.warn('[Popup] Invalid parallel tabs value:', parallelTabs);
+  }
+});
+
+// Start profile scraping
+startProfileBtn.addEventListener('click', async () => {
+  console.log('[Popup] Start Profile Scraping button clicked');
+
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'START_PROFILE_SCRAPING' });
+    console.log('[Popup] Profile scraping response:', response);
+
+    if (response && response.success) {
+      console.log('[Popup] Profile scraping started successfully');
+    } else {
+      console.error('[Popup] Failed to start profile scraping:', response);
+    }
+  } catch (error) {
+    console.error('[Popup] Error starting profile scraping:', error);
+  }
+
+  await updateUI();
+});
+
+// Stop profile scraping
+stopProfileBtn.addEventListener('click', async () => {
+  console.log('[Popup] Stop Profile Scraping button clicked');
+
+  try {
+    await chrome.runtime.sendMessage({ type: 'STOP_PROFILE_SCRAPING' });
+    console.log('[Popup] Profile scraping stopped');
+  } catch (error) {
+    console.error('[Popup] Error stopping profile scraping:', error);
+  }
+
+  await updateUI();
+});
+
 // Listen for updates from background
 chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === 'UPDATE_STATS') {
+  if (message.type === 'UPDATE_STATS' || message.type === 'UPDATE_PROFILE_PROGRESS') {
     updateUI();
   }
 });

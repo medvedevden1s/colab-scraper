@@ -28,6 +28,12 @@
       "matches": ["https://collabstr.com/influencers*"],
       "js": ["content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://collabstr.com/*"],
+      "exclude_matches": ["https://collabstr.com/influencers*"],
+      "js": ["profile-content.js"],
+      "run_at": "document_idle"
     }
   ]
 }

@@ -58,22 +58,51 @@ This installs:
 - **better-sqlite3**: Fast native SQLite
 - **body-parser**: Parse JSON requests
 
+### ⚠️ IMPORTANT: Database Migration (For Existing Users)
+
+If you're **upgrading** from an older version and already have scraped data:
+
+```bash
+npm run migrate
+```
+
+This adds new columns for profile details (name, location, bio, social platforms, etc.) while keeping your existing data safe.
+
+**New installations can skip this step** - the database is created with all columns automatically.
+
 ---
 
 ## 🚀 Step 2: Start API Server
 
-### Option A: Production Mode
+### Option A: Production Mode (Recommended)
 ```bash
 npm start
 ```
+**✨ NEW!** This automatically kills any process using port 4000 before starting.
 
 ### Option B: Development Mode (auto-reload)
 ```bash
 npm run dev
 ```
+**✨ NEW!** This also kills port 4000 first, then starts with auto-reload.
+
+### Option C: Direct Start (without port cleanup)
+```bash
+npm run start:direct
+```
 
 You should see:
 ```
+🔍 Checking for processes on port 4000...
+⚠ Found 2 process(es) using port 4000
+  Killing process 29240...
+  Killing process 18792...
+  ✓ Killed process 29240
+  ✓ Killed process 18792
+✓ Port 4000 is now free
+
+🚀 Starting API server...
+
 =================================
   Collabstr Scraper API Server
 =================================
@@ -84,6 +113,8 @@ You should see:
 ```
 
 **Keep this terminal open!** The server must be running for the extension to save data.
+
+**Note**: No more "port already in use" errors! The start script handles this automatically.
 
 ---
 
@@ -307,18 +338,12 @@ const API_URL = 'http://192.168.1.XXX:4000/api';
 
 **Problem:** `EADDRINUSE: address already in use :::4000`
 
-**Solutions:**
-1. Kill process on port 4000:
-   ```bash
-   # Windows
-   netstat -ano | findstr :4000
-   taskkill /PID <PID> /F
+**Solution:**
+✨ **FIXED!** Just use `npm start` - it automatically kills port 4000 before starting.
 
-   # Mac/Linux
-   lsof -i :4000
-   kill -9 <PID>
-   ```
-2. Or change port in server.js
+If you still have issues:
+1. Change port in server.js to a different port (e.g., 5000)
+2. Update background.js API_URL to match
 
 ### No Profiles Being Saved
 

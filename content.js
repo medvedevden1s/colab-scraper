@@ -33,7 +33,37 @@ function extractProfileIDs() {
       return username;
     }
     return null;
-  }).filter(id => id !== null && id !== '' && id !== 'influencers');
+  }).filter(id => {
+    if (!id || id === '') return false;
+
+    // Filter out common non-profile paths
+    const excludePaths = [
+      'influencers',
+      'brands',
+      'login',
+      'signup',
+      'search',
+      'how-it-works',
+      'pricing',
+      'about',
+      'contact',
+      'terms',
+      'privacy',
+      'faq'
+    ];
+
+    if (excludePaths.includes(id.toLowerCase())) return false;
+
+    // Filter out IDs that start with numbers followed by nothing or dashes (likely navigation/filter links)
+    // Keep IDs like "0124riii" but exclude "-10271", "123", etc.
+    if (/^-?\d+$/.test(id)) return false; // Pure numbers or negative numbers
+
+    // Filter out very short IDs (likely not usernames)
+    if (id.length < 3) return false;
+
+    // Keep everything else
+    return true;
+  });
 
   console.log('[Collabstr Scraper] Extracted profile IDs:', ids);
   return ids;

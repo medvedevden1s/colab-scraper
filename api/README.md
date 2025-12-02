@@ -11,17 +11,49 @@ cd api
 npm install
 ```
 
+### 1.5. Database Migration (If Upgrading from Old Version)
+
+**⚠️ IMPORTANT**: If you already have an existing database with scraped profiles, you need to run the migration to add new columns:
+
+```bash
+npm run migrate
+```
+
+This will:
+- ✅ Add new columns for profile details (name, location, bio, reviews, social platforms, status)
+- ✅ Keep all your existing data intact
+- ✅ Only run once (skips columns that already exist)
+
+**Note**: New installations don't need this - the database is created with all columns automatically.
+
 ### 2. Start the Server
 
+**Option 1: Quick Start (Windows)**
+Double-click `START_SERVER.bat` in the api folder!
+
+**Option 2: Command Line (Recommended)**
 ```bash
 npm start
 ```
+Automatically kills port 4000 first ✨
 
-Or with auto-reload for development:
-
+**Option 3: Development Mode**
 ```bash
 npm run dev
 ```
+Also kills port first, plus auto-reload ✨
+
+**Option 4: Direct Start**
+```bash
+npm run start:direct
+```
+Without killing port (may fail if port in use)
+
+**Note**: `npm start` and `npm run dev` now use `start.js` which automatically:
+- ✅ Checks if port 4000 is in use
+- ✅ Kills any processes using port 4000
+- ✅ Starts the API server cleanly
+- ✅ No more "EADDRINUSE" errors!
 
 ### 3. Server Running!
 

@@ -23,6 +23,14 @@ db.exec(`
     page INTEGER,
     scraped_at DATETIME,
     session_id TEXT,
+    name TEXT,
+    location TEXT,
+    bio TEXT,
+    review_rating REAL,
+    review_count INTEGER,
+    social_platforms TEXT,
+    status TEXT DEFAULT 'id_only',
+    profile_scraped_at DATETIME,
     PRIMARY KEY (id, page, session_id)
   )
 `);
@@ -326,6 +334,151 @@ app.delete('/api/profiles', (req, res) => {
     });
   } catch (error) {
     console.error('Error deleting data:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Get profiles that need detail scraping
+app.get('/api/profiles/unscraped', (req, res) => {
+  try {
+    const { limit = 100, sessionId } = req.query;
+
+    let query = `
+      SELECT id, MIN(session_id) as session_id
+      FROM profiles
+      WHERE (status = 'id_only' OR status IS NULL)
+        AND status != 'scraped'
+        AND status != 'invalid'
+        AND status != 'failed'
+    `;
+    let params = [];
+
+    if (sessionId) {
+      query += ' AND session_id = ?';
+      params.push(sessionId);
+    }
+
+    query += ' GROUP BY id ORDER BY MIN(ROWID) LIMIT ?';
+    params.push(parseInt(limit));
+
+    const profiles = db.prepare(query).all(...params);
+
+    res.json({
+      success: true,
+      count: profiles.length,
+      profiles: profiles
+    });
+  } catch (error) {
+    console.error('Error getting unscraped profiles:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Update profile with detailed information
+app.put('/api/profiles/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      name,
+      location,
+      bio,
+      review_rating,
+      review_count,
+      social_platforms,
+      status,
+      sessionId
+    } = req.body;
+
+    const stmt = db.prepare(`
+      UPDATE profiles
+      SET name = ?,
+          location = ?,
+          bio = ?,
+          review_rating = ?,
+          review_count = ?,
+          social_platforms = ?,
+          status = ?,
+          profile_scraped_at = datetime('now')
+      WHERE id = ?
+    `);
+
+    const result = stmt.run(
+      name,
+      location,
+      bio,
+      review_rating,
+      review_count,
+      JSON.stringify(social_platforms || []),
+      status || 'scraped',
+      id
+    );
+
+    console.log(`✓ Updated ${result.changes} row(s) for profile: ${id}`);
+
+    res.json({
+      success: true,
+      changes: result.changes
+    });
+  } catch (error) {
+    console.error('Error updating profile:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Get profile scraping progress
+app.get('/api/profiles/progress', (req, res) => {
+  try {
+    const { sessionId } = req.query;
+
+    let query = 'SELECT status, COUNT(*) as count FROM profiles';
+    let params = [];
+
+    if (sessionId) {
+      query += ' WHERE session_id = ?';
+      params.push(sessionId);
+    }
+
+    query += ' GROUP BY status';
+
+    const statusCounts = db.prepare(query).all(...params);
+
+    // Calculate totals
+    let total = 0;
+    let scraped = 0;
+    let idOnly = 0;
+    let failed = 0;
+    let invalid = 0;
+
+    statusCounts.forEach(row => {
+      total += row.count;
+      if (row.status === 'scraped') scraped = row.count;
+      else if (row.status === 'id_only' || !row.status) idOnly = row.count;
+      else if (row.status === 'failed') failed = row.count;
+      else if (row.status === 'invalid') invalid = row.count;
+    });
+
+    res.json({
+      success: true,
+      progress: {
+        total,
+        scraped,
+        idOnly,
+        failed,
+        invalid,
+        percentage: total > 0 ? Math.round((scraped / total) * 100) : 0
+      }
+    });
+  } catch (error) {
+    console.error('Error getting progress:', error);
     res.status(500).json({
       success: false,
       error: error.message
