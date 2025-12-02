@@ -1,0 +1,13 @@
+{
+  "name": "collabstr-scraper",
+  "version": "1.0.0",
+  "description": "Chrome extension to scrape Collabstr influencer profiles",
+  "scripts": {
+    "postinstall": "node copy-sql-wasm.js"
+  },
+  "dependencies": {
+    "sql.js": "^1.10.3"
+  },
+  "devDependencies": {},
+  "private": true
+}

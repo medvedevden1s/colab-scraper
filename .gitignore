@@ -1,0 +1,24 @@
+# sql.js library files (installed via npm)
+sql.js
+sql-wasm.wasm
+
+# npm
+node_modules/
+package-lock.json
+
+# Generated icon files
+icon16.png
+icon48.png
+icon128.png
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Extension debug
+*.log

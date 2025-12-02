@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Generate Extension Icons</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .container {
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 12px;
+      padding: 30px;
+      box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+
+    .icons {
+      display: flex;
+      justify-content: space-around;
+      margin: 30px 0;
+      flex-wrap: wrap;
+      gap: 20px;
+    }
+
+    .icon-box {
+      text-align: center;
+      background: rgba(255, 255, 255, 0.1);
+      padding: 20px;
+      border-radius: 8px;
+    }
+
+    canvas {
+      border: 2px solid white;
+      border-radius: 4px;
+      margin: 10px 0;
+      background: white;
+    }
+
+    button {
+      background: #10b981;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      transition: all 0.3s ease;
+    }
+
+    button:hover {
+      background: #059669;
+      transform: translateY(-2px);
+    }
+
+    .instructions {
+      background: rgba(255, 255, 255, 0.15);
+      padding: 20px;
+      border-radius: 8px;
+      margin-top: 30px;
+      line-height: 1.6;
+    }
+
+    .instructions h2 {
+      margin-top: 0;
+    }
+
+    .instructions ol {
+      padding-left: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Generate Extension Icons</h1>
+
+    <p style="text-align: center;">Click the buttons below to download the required icon files for your Chrome extension.</p>
+
+    <div class="icons">
+      <div class="icon-box">
+        <h3>16x16</h3>
+        <canvas id="icon16" width="16" height="16"></canvas>
+        <br>
+        <button onclick="downloadIcon(16)">Download icon16.png</button>
+      </div>
+
+      <div class="icon-box">
+        <h3>48x48</h3>
+        <canvas id="icon48" width="48" height="48"></canvas>
+        <br>
+        <button onclick="downloadIcon(48)">Download icon48.png</button>
+      </div>
+
+      <div class="icon-box">
+        <h3>128x128</h3>
+        <canvas id="icon128" width="128" height="128"></canvas>
+        <br>
+        <button onclick="downloadIcon(128)">Download icon128.png</button>
+      </div>
+    </div>
+
+    <div style="text-align: center; margin-top: 30px;">
+      <button onclick="downloadAll()" style="background: #3b82f6; padding: 15px 30px; font-size: 16px;">
+        Download All Icons
+      </button>
+    </div>
+
+    <div class="instructions">
+      <h2>Instructions</h2>
+      <ol>
+        <li>Click "Download All Icons" or download each icon individually</li>
+        <li>Save the files in your extension folder (same directory as manifest.json)</li>
+        <li>Make sure the files are named exactly:
+          <ul>
+            <li>icon16.png</li>
+            <li>icon48.png</li>
+            <li>icon128.png</li>
+          </ul>
+        </li>
+        <li>The icons feature a purple gradient with "CS" text (Collabstr Scraper)</li>
+      </ol>
+    </div>
+  </div>
+
+  <script>
+    // Function to create icon
+    function createIcon(size) {
+      const canvas = document.getElementById(`icon${size}`);
+      const ctx = canvas.getContext('2d');
+
+      // Create gradient background
+      const gradient = ctx.createLinearGradient(0, 0, size, size);
+      gradient.addColorStop(0, '#667eea');
+      gradient.addColorStop(1, '#764ba2');
+
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, size, size);
+
+      // Add text
+      ctx.fillStyle = 'white';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      if (size === 16) {
+        ctx.font = 'bold 10px Arial';
+        ctx.fillText('CS', size / 2, size / 2);
+      } else if (size === 48) {
+        ctx.font = 'bold 28px Arial';
+        ctx.fillText('CS', size / 2, size / 2);
+      } else if (size === 128) {
+        ctx.font = 'bold 72px Arial';
+        ctx.fillText('CS', size / 2, size / 2);
+
+        // Add a border
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(2, 2, size - 4, size - 4);
+      }
+    }
+
+    // Function to download icon
+    function downloadIcon(size) {
+      const canvas = document.getElementById(`icon${size}`);
+      const link = document.createElement('a');
+      link.download = `icon${size}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+
+    // Function to download all icons
+    function downloadAll() {
+      downloadIcon(16);
+      setTimeout(() => downloadIcon(48), 200);
+      setTimeout(() => downloadIcon(128), 400);
+    }
+
+    // Generate all icons on page load
+    createIcon(16);
+    createIcon(48);
+    createIcon(128);
+  </script>
+</body>
+</html>
