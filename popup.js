@@ -225,7 +225,7 @@ waitTimeInput.addEventListener('change', async () => {
 // Save parallel tabs setting when changed
 parallelTabsInput.addEventListener('change', async () => {
   const parallelTabs = parseInt(parallelTabsInput.value);
-  if (parallelTabs >= 1 && parallelTabs <= 20) {
+  if (parallelTabs >= 1 && parallelTabs <= 50) {
     await chrome.storage.local.set({ parallelTabs });
     console.log('[Popup] Parallel tabs updated to', parallelTabs);
   } else {
@@ -278,4 +278,4 @@ chrome.runtime.onMessage.addListener((message) => {
 updateUI();
 
 // Update UI every 2 seconds while open
-setInterval(updateUI, 2000);
+setInterval(updateUI, 5000);

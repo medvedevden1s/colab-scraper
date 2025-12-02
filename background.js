@@ -438,7 +438,7 @@ async function scrapeProfileInTab(profileId) {
 
 // Process profile scraping queue
 async function processProfileQueue() {
-  const BATCH_SIZE = 20; // Process 20 profiles per batch for safety
+  const BATCH_SIZE = 50; // Process 20 profiles per batch for safety
   let batchNumber = 0;
 
   // Keep looping until user stops or no more profiles

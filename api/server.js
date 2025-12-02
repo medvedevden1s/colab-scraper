@@ -16,34 +16,44 @@ app.use(bodyParser.urlencoded({ extended: true }));
 const dbPath = path.join(__dirname, 'collabstr_profiles.db');
 const db = new Database(dbPath);
 
-// Create profiles table
+// Create profiles table with current schema
 db.exec(`
   CREATE TABLE IF NOT EXISTS profiles (
-    id TEXT,
-    page INTEGER,
-    scraped_at DATETIME,
-    session_id TEXT,
+    id TEXT PRIMARY KEY,
     name TEXT,
     location TEXT,
     bio TEXT,
     review_rating REAL,
     review_count INTEGER,
-    social_platforms TEXT,
-    status TEXT DEFAULT 'id_only',
-    profile_scraped_at DATETIME,
-    PRIMARY KEY (id, page, session_id)
-  )
-`);
 
-// Create sessions table to track scraping sessions
-db.exec(`
-  CREATE TABLE IF NOT EXISTS sessions (
-    session_id TEXT PRIMARY KEY,
-    started_at DATETIME,
-    ended_at DATETIME,
-    total_profiles INTEGER DEFAULT 0,
-    total_pages INTEGER DEFAULT 0,
-    filters TEXT
+    -- Instagram
+    instagram_link TEXT,
+    instagram_followers INTEGER,
+
+    -- TikTok
+    tiktok_link TEXT,
+    tiktok_followers INTEGER,
+
+    -- YouTube
+    youtube_link TEXT,
+    youtube_followers INTEGER,
+
+    -- Twitter
+    twitter_link TEXT,
+    twitter_followers INTEGER,
+
+    -- Twitch
+    twitch_link TEXT,
+    twitch_followers INTEGER,
+
+    -- Amazon
+    amazon_link TEXT,
+
+    -- Metadata
+    status TEXT DEFAULT 'id_only',
+    first_scraped_at DATETIME,
+    last_updated_at DATETIME,
+    scraped_count INTEGER DEFAULT 1
   )
 `);
 
@@ -60,74 +70,10 @@ app.get('/', (req, res) => {
   });
 });
 
-// Start a new scraping session
-app.post('/api/session/start', (req, res) => {
-  try {
-    const sessionId = `session_${Date.now()}`;
-    const { filters } = req.body;
-
-    const stmt = db.prepare(`
-      INSERT INTO sessions (session_id, started_at, filters)
-      VALUES (?, datetime('now'), ?)
-    `);
-
-    stmt.run(sessionId, JSON.stringify(filters || {}));
-
-    console.log('✓ New session started:', sessionId);
-
-    res.json({
-      success: true,
-      sessionId: sessionId
-    });
-  } catch (error) {
-    console.error('Error starting session:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// End a scraping session
-app.post('/api/session/end', (req, res) => {
-  try {
-    const { sessionId } = req.body;
-
-    // Get total profiles for this session
-    const count = db.prepare('SELECT COUNT(*) as count FROM profiles WHERE session_id = ?').get(sessionId);
-    const maxPage = db.prepare('SELECT MAX(page) as max FROM profiles WHERE session_id = ?').get(sessionId);
-
-    // Update session
-    const stmt = db.prepare(`
-      UPDATE sessions
-      SET ended_at = datetime('now'),
-          total_profiles = ?,
-          total_pages = ?
-      WHERE session_id = ?
-    `);
-
-    stmt.run(count.count, maxPage.max || 0, sessionId);
-
-    console.log('✓ Session ended:', sessionId, '-', count.count, 'profiles');
-
-    res.json({
-      success: true,
-      totalProfiles: count.count,
-      totalPages: maxPage.max || 0
-    });
-  } catch (error) {
-    console.error('Error ending session:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Save profiles (bulk insert)
+// Save profile IDs (bulk insert for initial scraping)
 app.post('/api/profiles', (req, res) => {
   try {
-    const { profiles, sessionId } = req.body;
+    const { profiles } = req.body;
 
     if (!profiles || !Array.isArray(profiles)) {
       return res.status(400).json({
@@ -137,24 +83,19 @@ app.post('/api/profiles', (req, res) => {
     }
 
     const stmt = db.prepare(`
-      INSERT OR IGNORE INTO profiles (id, page, scraped_at, session_id)
-      VALUES (?, ?, ?, ?)
+      INSERT OR IGNORE INTO profiles (id, status, first_scraped_at)
+      VALUES (?, 'id_only', datetime('now'))
     `);
 
     const insertMany = db.transaction((profilesList) => {
       for (const profile of profilesList) {
-        stmt.run(
-          profile.id,
-          profile.page,
-          profile.scraped_at || new Date().toISOString(),
-          sessionId || 'default'
-        );
+        stmt.run(profile.id);
       }
     });
 
     insertMany(profiles);
 
-    console.log(`✓ Inserted ${profiles.length} profiles (session: ${sessionId || 'default'})`);
+    console.log(`✓ Inserted ${profiles.length} profile IDs`);
 
     res.json({
       success: true,
@@ -172,42 +113,26 @@ app.post('/api/profiles', (req, res) => {
 // Get statistics
 app.get('/api/stats', (req, res) => {
   try {
-    const { sessionId } = req.query;
+    const totalProfiles = db.prepare('SELECT COUNT(*) as count FROM profiles').get();
+    const scrapedProfiles = db.prepare('SELECT COUNT(*) as count FROM profiles WHERE status = ?').get('scraped');
+    const idOnlyProfiles = db.prepare('SELECT COUNT(*) as count FROM profiles WHERE status = ? OR status IS NULL').get('id_only');
 
-    let totalProfiles, uniqueProfiles, totalPages, profilesPerPage;
-
-    if (sessionId) {
-      // Stats for specific session
-      totalProfiles = db.prepare('SELECT COUNT(*) as count FROM profiles WHERE session_id = ?').get(sessionId);
-      uniqueProfiles = db.prepare('SELECT COUNT(DISTINCT id) as count FROM profiles WHERE session_id = ?').get(sessionId);
-      totalPages = db.prepare('SELECT MAX(page) as max FROM profiles WHERE session_id = ?').get(sessionId);
-      profilesPerPage = db.prepare(`
-        SELECT page, COUNT(*) as count
-        FROM profiles
-        WHERE session_id = ?
-        GROUP BY page
-        ORDER BY page
-      `).all(sessionId);
-    } else {
-      // Stats for all data
-      totalProfiles = db.prepare('SELECT COUNT(*) as count FROM profiles').get();
-      uniqueProfiles = db.prepare('SELECT COUNT(DISTINCT id) as count FROM profiles').get();
-      totalPages = db.prepare('SELECT MAX(page) as max FROM profiles').get();
-      profilesPerPage = db.prepare(`
-        SELECT page, COUNT(*) as count
-        FROM profiles
-        GROUP BY page
-        ORDER BY page
-      `).all();
-    }
+    // Platform stats
+    const withInstagram = db.prepare('SELECT COUNT(*) as count FROM profiles WHERE instagram_link IS NOT NULL').get();
+    const withTiktok = db.prepare('SELECT COUNT(*) as count FROM profiles WHERE tiktok_link IS NOT NULL').get();
+    const withYoutube = db.prepare('SELECT COUNT(*) as count FROM profiles WHERE youtube_link IS NOT NULL').get();
 
     res.json({
       success: true,
       stats: {
         totalProfiles: totalProfiles.count,
-        uniqueProfiles: uniqueProfiles.count,
-        totalPages: totalPages.max || 0,
-        profilesPerPage: profilesPerPage
+        scrapedProfiles: scrapedProfiles.count,
+        idOnlyProfiles: idOnlyProfiles.count,
+        platforms: {
+          instagram: withInstagram.count,
+          tiktok: withTiktok.count,
+          youtube: withYoutube.count
+        }
       }
     });
   } catch (error) {
@@ -222,22 +147,17 @@ app.get('/api/stats', (req, res) => {
 // Get all profiles
 app.get('/api/profiles', (req, res) => {
   try {
-    const { sessionId, page, limit = 1000, offset = 0 } = req.query;
+    const { status, limit = 1000, offset = 0 } = req.query;
 
     let query = 'SELECT * FROM profiles';
     let params = [];
 
-    if (sessionId) {
-      query += ' WHERE session_id = ?';
-      params.push(sessionId);
+    if (status) {
+      query += ' WHERE status = ?';
+      params.push(status);
     }
 
-    if (page) {
-      query += sessionId ? ' AND page = ?' : ' WHERE page = ?';
-      params.push(page);
-    }
-
-    query += ' ORDER BY page, id LIMIT ? OFFSET ?';
+    query += ' ORDER BY id LIMIT ? OFFSET ?';
     params.push(parseInt(limit), parseInt(offset));
 
     const profiles = db.prepare(query).all(...params);
@@ -259,22 +179,44 @@ app.get('/api/profiles', (req, res) => {
 // Export profiles as CSV
 app.get('/api/export/csv', (req, res) => {
   try {
-    const { sessionId } = req.query;
+    const profiles = db.prepare(`
+      SELECT
+        id, name, location, bio,
+        instagram_link, instagram_followers,
+        tiktok_link, tiktok_followers,
+        youtube_link, youtube_followers,
+        twitter_link, twitter_followers,
+        review_rating, review_count,
+        status, first_scraped_at, last_updated_at
+      FROM profiles
+      ORDER BY id
+    `).all();
 
-    let query = 'SELECT id, page, scraped_at, session_id FROM profiles ORDER BY page, id';
-    let params = [];
+    // Create CSV header
+    let csv = 'id,name,location,bio,instagram_link,instagram_followers,tiktok_link,tiktok_followers,youtube_link,youtube_followers,twitter_link,twitter_followers,review_rating,review_count,status,first_scraped_at,last_updated_at\n';
 
-    if (sessionId) {
-      query = 'SELECT id, page, scraped_at, session_id FROM profiles WHERE session_id = ? ORDER BY page, id';
-      params.push(sessionId);
-    }
-
-    const profiles = db.prepare(query).all(...params);
-
-    // Create CSV
-    let csv = 'id,page,scraped_at,session_id\n';
+    // Add rows
     profiles.forEach(profile => {
-      csv += `${profile.id},${profile.page},${profile.scraped_at},${profile.session_id}\n`;
+      const row = [
+        profile.id || '',
+        (profile.name || '').replace(/,/g, ';'),
+        (profile.location || '').replace(/,/g, ';'),
+        (profile.bio || '').replace(/,/g, ';').replace(/\n/g, ' '),
+        profile.instagram_link || '',
+        profile.instagram_followers || '',
+        profile.tiktok_link || '',
+        profile.tiktok_followers || '',
+        profile.youtube_link || '',
+        profile.youtube_followers || '',
+        profile.twitter_link || '',
+        profile.twitter_followers || '',
+        profile.review_rating || '',
+        profile.review_count || '',
+        profile.status || '',
+        profile.first_scraped_at || '',
+        profile.last_updated_at || ''
+      ];
+      csv += row.join(',') + '\n';
     });
 
     res.setHeader('Content-Type', 'text/csv');
@@ -291,47 +233,28 @@ app.get('/api/export/csv', (req, res) => {
   }
 });
 
-// Get all sessions
-app.get('/api/sessions', (req, res) => {
-  try {
-    const sessions = db.prepare(`
-      SELECT * FROM sessions
-      ORDER BY started_at DESC
-    `).all();
-
-    res.json({
-      success: true,
-      count: sessions.length,
-      sessions: sessions
-    });
-  } catch (error) {
-    console.error('Error getting sessions:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Clear all data
+// Clear all data (or specific profiles by status)
 app.delete('/api/profiles', (req, res) => {
   try {
-    const { sessionId } = req.query;
+    const { status } = req.query;
 
-    if (sessionId) {
-      db.prepare('DELETE FROM profiles WHERE session_id = ?').run(sessionId);
-      db.prepare('DELETE FROM sessions WHERE session_id = ?').run(sessionId);
-      console.log('✓ Deleted session:', sessionId);
+    if (status) {
+      const result = db.prepare('DELETE FROM profiles WHERE status = ?').run(status);
+      console.log(`✓ Deleted ${result.changes} profiles with status: ${status}`);
+      res.json({
+        success: true,
+        message: `Deleted ${result.changes} profiles with status: ${status}`,
+        deleted: result.changes
+      });
     } else {
-      db.prepare('DELETE FROM profiles').run();
-      db.prepare('DELETE FROM sessions').run();
-      console.log('✓ Deleted all data');
+      const result = db.prepare('DELETE FROM profiles').run();
+      console.log(`✓ Deleted all ${result.changes} profiles`);
+      res.json({
+        success: true,
+        message: `Deleted all ${result.changes} profiles`,
+        deleted: result.changes
+      });
     }
-
-    res.json({
-      success: true,
-      message: sessionId ? 'Session deleted' : 'All data deleted'
-    });
   } catch (error) {
     console.error('Error deleting data:', error);
     res.status(500).json({
@@ -468,19 +391,7 @@ app.put('/api/profiles/:id', (req, res) => {
 // Get profile scraping progress
 app.get('/api/profiles/progress', (req, res) => {
   try {
-    const { sessionId } = req.query;
-
-    let query = 'SELECT status, COUNT(*) as count FROM profiles';
-    let params = [];
-
-    if (sessionId) {
-      query += ' WHERE session_id = ?';
-      params.push(sessionId);
-    }
-
-    query += ' GROUP BY status';
-
-    const statusCounts = db.prepare(query).all(...params);
+    const statusCounts = db.prepare('SELECT status, COUNT(*) as count FROM profiles GROUP BY status').all();
 
     // Calculate totals
     let total = 0;
@@ -529,15 +440,15 @@ app.listen(PORT, () => {
   console.log('=================================');
   console.log('');
   console.log('Available endpoints:');
-  console.log('  GET  /                      - Health check');
-  console.log('  POST /api/session/start     - Start scraping session');
-  console.log('  POST /api/session/end       - End scraping session');
-  console.log('  POST /api/profiles          - Save profiles');
-  console.log('  GET  /api/profiles          - Get all profiles');
-  console.log('  GET  /api/stats             - Get statistics');
-  console.log('  GET  /api/export/csv        - Export as CSV');
-  console.log('  GET  /api/sessions          - Get all sessions');
-  console.log('  DELETE /api/profiles        - Clear data');
+  console.log('  GET    /                          - Health check');
+  console.log('  POST   /api/profiles              - Save profile IDs');
+  console.log('  GET    /api/profiles              - Get all profiles');
+  console.log('  GET    /api/profiles/unscraped    - Get unscraped profiles');
+  console.log('  GET    /api/profiles/progress     - Get scraping progress');
+  console.log('  PUT    /api/profiles/:id          - Update profile details');
+  console.log('  DELETE /api/profiles              - Clear data');
+  console.log('  GET    /api/stats                 - Get statistics');
+  console.log('  GET    /api/export/csv            - Export as CSV');
   console.log('');
 });
 
